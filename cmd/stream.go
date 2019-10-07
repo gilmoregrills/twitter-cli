@@ -19,17 +19,17 @@ import (
 	"fmt"
 	// "time"
 	"log"
-	"strconv"
-	"strings"
 	"os"
 	"os/signal"
+	"strconv"
+	"strings"
 	"syscall"
 
-	"github.com/spf13/cobra"
-	"github.com/spf13/viper"
 	"github.com/dghubble/go-twitter/twitter"
 	"github.com/dghubble/oauth1"
 	"github.com/fatih/color"
+	"github.com/spf13/cobra"
+	"github.com/spf13/viper"
 )
 
 // streamCmd represents the stream command
@@ -50,48 +50,98 @@ func stream() {
 	httpClient := config.Client(oauth1.NoContext, token)
 	client := twitter.NewClient(httpClient)
 
-	color.Yellow("fetching 5 most recent tweets to start with")
-	tweets, resp, err := client.Timelines.HomeTimeline(&twitter.HomeTimelineParams{
-    	Count: 5,
+	// print the last 5 tweets
+	// color.Yellow("fetching 5 most recent tweets to start with")
+	// tweets, resp, err := client.Timelines.HomeTimeline(&twitter.HomeTimelineParams{
+	//    	Count: 5,
+	// })
+	// if err != nil {
+	// 	log.Println(resp)
+	// 	log.Fatal(err)
+	// }
+	// for i := 0; i < len(tweets); i++ {
+	// 	printTweet(&tweets[i], 0, client)
+	// }
+
+	// get intial list and user.FriendsCount of those user is following
+	// TODO: cache this list somewhere? don't want to generate every time
+	//       we stream because we'll get rate limited, maybe I could check
+	//       if the followercount has changed since last time and then if
+	//       yes then update, that's a constant 1 api call every time stream runs not like 4+
+	params := &twitter.FriendListParams{
+		Cursor: 0,
+		Count:  200,
+	}
+	friends, _, err := client.Friends.List(params)
+	if err != nil {
+		log.Fatal(err)
+	}
+	user, _, err := client.Users.Show(&twitter.UserShowParams{
+		ScreenName: viper.GetString("username"),
 	})
 	if err != nil {
-		log.Println(resp)
 		log.Fatal(err)
 	}
-	for i := 0; i < len(tweets); i++ {
-		printTweet(&tweets[i], 0, client)
-	}
-	// followers, resp, err := client.Followers.List(&twitter.FollowerListParams{})
-	// for follower in followers, get the IDStr and add it to a list pls
-	// fmt.Printf("%+v\n", followers)
 
-	params := &twitter.StreamUserParams{
-    	With:          "followings",
-    	StallWarnings: twitter.Bool(true),
+	// for user in list, get the IDStr and add it to a list
+	following := make([]string, 0, user.FriendsCount)
+	for friends.NextCursor != 0 {
+		for user := range friends.Users {
+			following = append(following, friends.Users[user].IDStr)
+		}
+		params.Cursor = friends.NextCursor
+		friends, _, err = client.Friends.List(params)
+		if err != nil {
+			log.Fatal(err)
+		}
 	}
-	stream, err := client.Streams.User(params)
+	fmt.Println(len(following))
+	fmt.Println(following)
+
+	// create a stream that follows that list of users
+	// TODO: Filter this more so that it only returns tweets/RTs by that user
+	streamParams := &twitter.StreamFilterParams{
+		Follow:        following,
+		FilterLevel:   viper.GetString("streaming_filter_level"),
+		StallWarnings: twitter.Bool(true),
+	}
+	stream, err := client.Streams.Filter(streamParams)
 	if err != nil {
 		log.Fatal(err)
 	}
 
+	// let go-twitter handle the stream, executing the handler in demux.Tweet
 	demux := twitter.NewSwitchDemux()
 	demux.Tweet = func(tweet *twitter.Tweet) {
-		printTweet(tweet, 0, client)
-		color.Yellow("---")
+		//TODO: dont print if it's a tweet being RT'd by someone else etc
+		if idStrInSlice(tweet.User.IDStr, following) {
+			printTweet(tweet, 0, client)
+			color.Yellow("---")
+		}
 	}
-
 	go demux.HandleChan(stream.Messages)
 
+	// handle closing the stream
 	ch := make(chan os.Signal)
 	signal.Notify(ch, syscall.SIGINT, syscall.SIGTERM)
 	log.Println(<-ch)
-
 	color.Yellow("stopping stream...")
 	stream.Stop()
 }
 
+func idStrInSlice(idStr string, users []string) bool {
+	for _, user := range users {
+		if user == idStr {
+			return true
+		}
+	}
+	return false
+}
+
 // prints a tweet, calls itself when printing tweets which quote other tweets
 // or are replies so that it can format threads/quote tweets properly
+// TODO: Make the formatting nicer
+// TODO: Move to shared library ../lib/printers or something
 func printTweet(tweet *twitter.Tweet, indent int, client *twitter.Client) {
 	if indent > 10 {
 		return
@@ -102,7 +152,7 @@ func printTweet(tweet *twitter.Tweet, indent int, client *twitter.Client) {
 	fmt.Printf("%s%+v\n", indentStr, tweet.Text)
 	if tweet.QuotedStatus != nil {
 		fmt.Printf("%squoted tweet:\n", indentStr)
-		printTweet(tweet.QuotedStatus, indent + 2, client)
+		printTweet(tweet.QuotedStatus, indent+2, client)
 	}
 	if tweet.InReplyToStatusID != 0 {
 		fmt.Printf("%sreplying to @%s\n", indentStr, tweet.InReplyToScreenName)
@@ -110,13 +160,16 @@ func printTweet(tweet *twitter.Tweet, indent int, client *twitter.Client) {
 		if err != nil {
 			log.Fatal(err)
 		}
-		printTweet(previousTweet, indent + 2, client)
+		printTweet(previousTweet, indent+2, client)
 	}
 	color.Cyan("%slikes: %s, retweets: %s, replies: %s, quotes: %s\n", indentStr, strconv.Itoa(tweet.FavoriteCount), strconv.Itoa(tweet.RetweetCount), strconv.Itoa(tweet.ReplyCount), strconv.Itoa(tweet.QuoteCount))
 }
 
 func init() {
 	rootCmd.AddCommand(streamCmd)
+
+	streamCmd.PersistentFlags().StringP("streaming_filter_level", "", "", "loaded from config")
+	viper.BindPFlag("streaming_filter_level", streamCmd.PersistentFlags().Lookup("streaming_filter_level"))
 
 	// Here you will define your flags and configuration settings.
 

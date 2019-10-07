@@ -34,6 +34,7 @@ var configCmd = &cobra.Command{
 		fmt.Println("access token secret is: ", viper.GetString("access_token_secret"))
 		fmt.Println("consumer token is: ", viper.GetString("consumer_token"))
 		fmt.Println("consumer token secret is: ", viper.GetString("consumer_token_secret"))
+		fmt.Println("streaming filter level is: ", viper.GetString("streaming_filter_level"))
 	},
 }
 
