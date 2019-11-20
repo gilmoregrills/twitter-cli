@@ -15,8 +15,8 @@ limitations under the License.
 */
 package main
 
-import "./cmd"
+import "github.com/gilmoregrills/twitter-cli/cmd"
 
 func main() {
-  cmd.Execute()
+	cmd.Execute()
 }
