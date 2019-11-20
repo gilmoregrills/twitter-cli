@@ -22,3 +22,10 @@ jobs:
 
     - name: Build
       run: go build -v .
+  
+    - name: Release
+      uses: skx/github-action-publish-binaries@master
+      env:
+        GITHUB_KEY: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        args: 'twitter-cli'
