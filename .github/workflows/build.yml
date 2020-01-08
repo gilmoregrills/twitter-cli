@@ -22,3 +22,11 @@ jobs:
 
     - name: Build
       run: go build -v .
+
+#     fix this to use goreleaser instead
+#     - name: Release
+#       uses: skx/github-action-publish-binaries@master
+#       env:
+#         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+#       with:
+#         args: 'twitter-cli'
